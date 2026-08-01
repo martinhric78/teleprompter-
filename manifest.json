@@ -1,0 +1,15 @@
+{
+  "name": "Hard Hat Prompter",
+  "short_name": "Prompter",
+  "description": "Voice-following teleprompter for Hard Hat Nation videos",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0D0B08",
+  "theme_color": "#0D0B08",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

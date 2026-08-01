@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Prompter">
+<meta name="theme-color" content="#0D0B08">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<title>Hard Hat Prompter Pro</title>
+<style>
+  :root{
+    --gold:#F0B22A; --gold-deep:#C98A12; --ink:#0D0B08; --panel:#181410;
+    --paper:#F5EEDC; --hazard:#E23B2E; --line:#FF2D1A; --spoken:#F0B22A; --upcoming:#FFFDF4;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%; background:var(--ink); color:var(--paper);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden;}
+  button{font-family:inherit;}
+
+  /* ---------- SETUP ---------- */
+  #setup{position:fixed; inset:0; background:var(--ink); z-index:30; display:flex; flex-direction:column;
+    padding:calc(14px + env(safe-area-inset-top)) 18px calc(14px + env(safe-area-inset-bottom)); gap:12px; overflow:auto;}
+  .brand{display:flex; align-items:center; gap:10px;}
+  .hat{width:34px;height:22px;border:3px solid var(--gold);border-bottom:none;border-radius:16px 16px 0 0;position:relative;flex-shrink:0;}
+  .hat::after{content:"";position:absolute;left:-7px;right:-7px;bottom:-3px;height:5px;background:var(--gold);border-radius:3px;}
+  h1{font-size:clamp(19px,5.5vw,25px); letter-spacing:.06em; font-weight:900; text-transform:uppercase; color:var(--gold);}
+  .sub{font-size:13px; color:#B7AD97;}
+  label{font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); display:block; margin-bottom:5px;}
+  textarea{width:100%; flex:1; min-height:160px; background:var(--panel); color:var(--paper); border:2px solid #2A241C;
+    border-radius:10px; padding:13px; font-size:16px; line-height:1.5; resize:none;}
+  textarea:focus{outline:none; border-color:var(--gold);}
+  .row{display:flex; gap:10px; align-items:center;}
+  .row label{margin:0; flex:1.2;}
+  input[type=range]{flex:2; accent-color:var(--gold); height:32px;}
+  .val{width:46px; text-align:right; font-weight:800; color:var(--gold); font-variant-numeric:tabular-nums; font-size:14px;}
+  .modeRow{display:flex; gap:8px;}
+  .modeBtn{flex:1; padding:13px 8px; border-radius:10px; border:2px solid #2A241C; background:var(--panel);
+    color:#B7AD97; font-weight:800; font-size:14px; letter-spacing:.04em; cursor:pointer;}
+  .modeBtn.on{border-color:var(--gold); color:var(--gold); background:rgba(240,178,42,.08);}
+  .modeBtn small{display:block; font-weight:600; font-size:10.5px; letter-spacing:0; margin-top:3px; color:#8E8571;}
+  #startBtn{background:var(--gold); color:var(--ink); border:none; border-radius:12px; padding:17px;
+    font-size:18px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; width:100%;
+    box-shadow:0 4px 0 var(--gold-deep); cursor:pointer;}
+  #startBtn:active{transform:translateY(3px); box-shadow:0 1px 0 var(--gold-deep);}
+  .note{font-size:11.5px; color:#8E8571; line-height:1.45;}
+
+  /* ---------- STAGE ---------- */
+  #stage{position:fixed; inset:0; display:none; background:#000;}
+  #cam{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1);}
+  #stage.noCam #cam{display:none;}
+  #stage.noCam{background:radial-gradient(120% 100% at 50% 0%, #1C1712 0%, #0D0B08 70%);}
+  #shade{position:absolute; inset:0; background:rgba(8,6,3,.44); pointer-events:none;}
+
+  #scrollZone{position:absolute; inset:0; overflow:hidden;}
+  #scriptText{position:absolute; left:6%; right:6%; top:0; font-weight:800; line-height:1.42; will-change:transform;}
+  #scriptText .w{color:var(--upcoming); text-shadow:0 2px 10px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.95);}
+  #scriptText .w.said{color:var(--spoken); opacity:.75;}
+  #scriptText .w.now{color:var(--gold); text-decoration:underline; text-decoration-thickness:3px; text-underline-offset:5px;}
+  #scriptText .cue{color:#9AD1FF; font-style:italic; font-weight:600; opacity:.85; text-shadow:0 2px 8px rgba(0,0,0,.95);}
+
+  #laser{position:absolute; left:0; right:0; top:32%; height:2px; background:var(--line);
+    box-shadow:0 0 10px 1px rgba(255,45,26,.85); opacity:.9; pointer-events:none;}
+  #laser::before,#laser::after{content:""; position:absolute; top:-5px; width:0; height:0;
+    border-top:6px solid transparent; border-bottom:6px solid transparent;}
+  #laser::before{left:4px; border-left:9px solid var(--line);}
+  #laser::after{right:4px; border-right:9px solid var(--line);}
+
+  #topbar{position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between; align-items:center; gap:8px;
+    padding:calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left)); z-index:4;}
+  .chip{background:rgba(13,11,8,.78); border:1px solid rgba(240,178,42,.5); color:var(--gold);
+    font-size:12.5px; font-weight:800; letter-spacing:.06em; padding:9px 13px; border-radius:999px; cursor:pointer; white-space:nowrap;}
+  #voiceChip.listening{border-color:#4CAF6D; color:#7CE29B;}
+  #voiceChip.listening::before{content:"● "; animation:pulse 1.2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  #timer{color:#fff; font-variant-numeric:tabular-nums; border-color:rgba(255,255,255,.35);}
+  #timer.rec{border-color:var(--hazard); background:rgba(226,59,46,.28);}
+  #timer.rec::before{content:"● "; color:#FF6A5E;}
+
+  #controls{position:absolute; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; gap:24px;
+    padding:12px 18px calc(14px + env(safe-area-inset-bottom)); z-index:4;}
+  .sideBtn{width:58px; height:58px; border-radius:50%; background:rgba(13,11,8,.78); border:2px solid rgba(240,178,42,.55);
+    color:var(--gold); font-size:21px; font-weight:900; display:flex; align-items:center; justify-content:center; cursor:pointer;}
+  #recBtn{width:80px; height:80px; border-radius:50%; border:4px solid #fff; background:var(--hazard);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;}
+  #recBtn .core{width:52px; height:52px; border-radius:50%; background:var(--hazard); transition:all .15s; border:none;}
+  #recBtn.recording .core{width:32px; height:32px; border-radius:8px;}
+  .hint{position:absolute; bottom:calc(104px + env(safe-area-inset-bottom)); left:0; right:0; text-align:center;
+    font-size:12.5px; font-weight:700; letter-spacing:.04em; color:rgba(255,255,255,.85); text-shadow:0 1px 6px #000; pointer-events:none; z-index:3;}
+
+  /* ---------- LANDSCAPE ---------- */
+  @media (orientation: landscape){
+    #scriptText{left:4%; right:120px;}
+    #topbar{right:auto; left:0; flex-direction:column; align-items:flex-start; width:auto;
+      padding-left:calc(10px + env(safe-area-inset-left));}
+    #controls{left:auto; right:0; top:0; bottom:0; flex-direction:column; width:112px; gap:18px;
+      padding:0 calc(12px + env(safe-area-inset-right)) 0 0;}
+    .hint{bottom:12px; right:130px; left:4%; text-align:left;}
+    #laser{right:118px;}
+  }
+
+  #count{position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    font-size:140px; font-weight:900; color:var(--gold); text-shadow:0 4px 30px rgba(0,0,0,.8); pointer-events:none; z-index:5;}
+  #toast{position:absolute; top:calc(60px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%);
+    background:rgba(13,11,8,.94); border:1px solid var(--gold); color:var(--paper); padding:12px 16px; border-radius:10px;
+    font-size:13.5px; max-width:86%; text-align:center; display:none; z-index:7; line-height:1.4;}
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <div class="brand"><div class="hat"></div><h1>Hard Hat Prompter&nbsp;Pro</h1></div>
+  <div class="sub">Voice-following teleprompter. Crack a joke, cough, go off-script — it holds your spot and catches you when you come back. Works upright or sideways.</div>
+
+  <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
+    <label for="scriptInput">Your script — put stage directions in (parentheses), they show blue and the voice tracker skips them</label>
+    <textarea id="scriptInput" spellcheck="false"></textarea>
+  </div>
+
+  <div class="modeRow">
+    <button class="modeBtn on" id="modeVoice">🎙 VOICE FOLLOW<small>scrolls when you talk, waits when you don't</small></button>
+    <button class="modeBtn" id="modeAuto">⏱ AUTO SCROLL<small>steady speed, tap to pause</small></button>
+  </div>
+
+  <div class="row">
+    <label>Text size</label>
+    <input type="range" id="fontSize" min="24" max="64" value="38">
+    <div class="val" id="fontVal">38</div>
+  </div>
+  <div class="row" id="speedRow" style="opacity:.45">
+    <label>Auto speed</label>
+    <input type="range" id="speed" min="10" max="90" value="34">
+    <div class="val" id="speedVal">34</div>
+  </div>
+  <div class="row">
+    <label>Background dim</label>
+    <input type="range" id="dim" min="10" max="80" value="44">
+    <div class="val" id="dimVal">44</div>
+  </div>
+
+  <button id="startBtn">Open camera &amp; prompter</button>
+  <div class="note">Allow camera + microphone when asked. Rotate your phone any time — the layout follows. Recording saves a video file to your phone when you stop. Voice follow needs a working mic; if it can't start, the app drops to auto scroll on its own.</div>
+</div>
+
+<div id="stage">
+  <video id="cam" autoplay playsinline muted></video>
+  <div id="shade"></div>
+  <div id="scrollZone"><div id="scriptText"></div></div>
+  <div id="laser"></div>
+
+  <div id="topbar">
+    <button class="chip" id="backBtn">✕ Edit</button>
+    <button class="chip" id="voiceChip">VOICE</button>
+    <div class="chip" id="timer">00:00</div>
+    <button class="chip" id="restartBtn">⟲ Top</button>
+  </div>
+
+  <div id="count"></div>
+  <div class="hint" id="hint"></div>
+
+  <div id="controls">
+    <button class="sideBtn" id="slower">−</button>
+    <button id="recBtn"><div class="core"></div></button>
+    <button class="sideBtn" id="faster">+</button>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script>
+const DEFAULT_SCRIPT = `HOOK
+If you've been following this channel, you know me as the guy digging through Goodwill, flipping shoes and electronics on eBay. And you probably noticed... I kind of disappeared. So let me tell you where I've been — and what's about to change here.
+
+(Hold up the shoes)
+
+And before you think I quit — I bought these three days ago. So no, I'm not going anywhere.
+
+THE HONEST PART
+Here's the truth. I never stopped flipping. I still go to Goodwill. I still find deals. But I stepped back from the channel because I realized something.
+
+I was only showing you ONE way to make money. And that's not really who I am.
+
+Most of you don't know this — I've been in the trades almost 30 years. New York, Chicago, now here in Florida. I run a handyman business. I've built apps from scratch with no coding background. The flipping was just the part I put on camera. It was never the whole story.
+
+WHAT'S CHANGING
+So this channel is growing up a little. Same mission — I'm still here to help regular people make money and build something. That never changes.
+
+But now I'm opening the whole toolbox. Real tool reviews from a guy who actually uses them on the job. How to make money in the trades and side hustles. Business for blue-collar folks who want more than a paycheck. And yes — still the flips. Still the thrift hauls.
+
+New name: Hard Hat Nation. Work hard. Build smart.
+
+SHOW THE FLIP
+Alright, enough talking. Let me show you what I grabbed this week...
+
+(Do the shoe flip: what it is, what you paid, what it sells for, profit)
+
+CLOSE
+That's the plan. If you've been here since the flipping days — thank you. Stick around. And if you're new — welcome to Hard Hat Nation.
+
+Tool reviews are coming next. Hit subscribe so you don't miss them. See you in the next one.`;
+
+const $ = id => document.getElementById(id);
+let stream=null, recorder=null, chunks=[];
+let mode='voice';                 // 'voice' | 'auto'
+let words=[];                     // {el, norm} trackable words (cues excluded)
+let pos=-1;                       // index of last spoken word
+let targetY=0, curY=0, rafId=null;
+let autoOn=false, autoLast=0, speed=34;
+let rec=null, recActive=false, wantRec=false;
+let recStart=0, timerInt=null;
+
+/* ---------- setup ---------- */
+(async () => {
+  $('scriptInput').value = DEFAULT_SCRIPT;
+  try{ const s = localStorage.getItem('hhn-p2-script'); if(s) $('scriptInput').value=s; }catch(e){}
+  try{
+    const c = localStorage.getItem('hhn-p2-cfg');
+    if(c){ const cfg=JSON.parse(c);
+      if(cfg.font){$('fontSize').value=cfg.font;$('fontVal').textContent=cfg.font;}
+      if(cfg.speed){$('speed').value=cfg.speed;$('speedVal').textContent=cfg.speed;speed=+cfg.speed;}
+      if(cfg.dim){$('dim').value=cfg.dim;$('dimVal').textContent=cfg.dim;}
+      if(cfg.mode){setMode(cfg.mode);}
+    }
+  }catch(e){}
+})();
+async function saveState(){
+  try{
+    localStorage.setItem('hhn-p2-script', $('scriptInput').value);
+    localStorage.setItem('hhn-p2-cfg', JSON.stringify({font:$('fontSize').value,speed:$('speed').value,dim:$('dim').value,mode}));
+  }catch(e){}
+}
+function setMode(m){
+  mode=m;
+  $('modeVoice').classList.toggle('on', m==='voice');
+  $('modeAuto').classList.toggle('on', m==='auto');
+  $('speedRow').style.opacity = m==='auto' ? '1' : '.45';
+}
+$('modeVoice').onclick=()=>setMode('voice');
+$('modeAuto').onclick=()=>setMode('auto');
+$('fontSize').oninput=e=>$('fontVal').textContent=e.target.value;
+$('speed').oninput=e=>{$('speedVal').textContent=e.target.value; speed=+e.target.value;};
+$('dim').oninput=e=>$('dimVal').textContent=e.target.value;
+
+function toast(msg, ms=4200){
+  const t=$('toast'); t.textContent=msg; t.style.display='block';
+  clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none', ms);
+}
+const norm = w => w.toLowerCase().replace(/[^a-z0-9']/g,'');
+
+/* ---------- build word spans ---------- */
+function buildScript(){
+  const raw = $('scriptInput').value || DEFAULT_SCRIPT;
+  const holder = $('scriptText');
+  holder.innerHTML=''; words=[]; pos=-1;
+  raw.split('\n').forEach(line=>{
+    const div=document.createElement('div');
+    if(line.trim()===''){ div.innerHTML='&nbsp;'; holder.appendChild(div); return; }
+    const isCue = /^\s*\(.*\)\s*$/.test(line);
+    line.split(/\s+/).forEach(tok=>{
+      if(!tok) return;
+      const sp=document.createElement('span');
+      sp.textContent=tok+' ';
+      if(isCue){ sp.className='cue'; }
+      else{
+        sp.className='w';
+        const n=norm(tok);
+        if(n) words.push({el:sp, norm:n});
+      }
+      div.appendChild(sp);
+    });
+    holder.appendChild(div);
+  });
+}
+
+/* ---------- scrolling engine ---------- */
+function laserPx(){ return $('scrollZone').clientHeight * 0.32; }
+function setTargetToWord(i){
+  if(i<0){ targetY = -laserPx(); return; }
+  const el=words[i].el;
+  targetY = el.offsetTop + el.offsetHeight/2 - laserPx();
+}
+function loop(t){
+  // auto mode advance
+  if(mode==='auto' && autoOn){
+    if(!autoLast) autoLast=t;
+    targetY += speed*(t-autoLast)/1000;
+  }
+  autoLast=t;
+  // smooth follow
+  curY += (targetY-curY)*0.14;
+  $('scriptText').style.transform = `translateY(${-curY}px)`;
+  rafId=requestAnimationFrame(loop);
+}
+
+/* ---------- voice follow ---------- */
+function startVoice(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ toast('Voice follow not supported in this browser — switched to auto scroll.'); setMode('auto'); autoOn=false; return; }
+  rec = new SR();
+  rec.continuous=true; rec.interimResults=true; rec.lang='en-US';
+  rec.onresult = e=>{
+    let recent=[];
+    for(let i=Math.max(0,e.results.length-3); i<e.results.length; i++){
+      recent = recent.concat(e.results[i][0].transcript.trim().split(/\s+/));
+    }
+    matchWords(recent.slice(-8).map(norm).filter(Boolean));
+  };
+  rec.onstart = ()=>{ recActive=true; $('voiceChip').classList.add('listening'); $('voiceChip').textContent='LISTENING'; };
+  rec.onend = ()=>{ recActive=false;
+    if(mode==='voice' && $('stage').style.display==='block'){ try{ rec.start(); }catch(e){} } // keep alive
+    else { $('voiceChip').classList.remove('listening'); $('voiceChip').textContent='VOICE'; }
+  };
+  rec.onerror = ev=>{
+    if(ev.error==='not-allowed' || ev.error==='service-not-allowed'){
+      toast('Mic blocked for voice follow — switched to auto scroll. Tap text to pause/resume.', 5000);
+      setMode('auto'); autoOn=true;
+    }
+  };
+  try{ rec.start(); }catch(e){}
+}
+function stopVoice(){ if(rec){ try{ rec.onend=null; rec.stop(); }catch(e){} rec=null; }
+  recActive=false; $('voiceChip').classList.remove('listening'); $('voiceChip').textContent='VOICE'; }
+
+/* match recent spoken words against a window ahead of current position */
+function matchWords(spoken){
+  if(!spoken.length || !words.length) return;
+  const WINDOW=34;
+  const start=Math.max(0,pos-2), end=Math.min(words.length-1, Math.max(pos,0)+WINDOW);
+  let best=-1;
+  // walk spoken words in order; greedy align inside window
+  let cursor=start;
+  for(const sw of spoken){
+    for(let j=cursor; j<=end; j++){
+      const w=words[j].norm;
+      if(w===sw || (w.length>3 && sw.length>3 && (w.startsWith(sw)||sw.startsWith(w)))){
+        best=j; cursor=j+1; break;
+      }
+    }
+  }
+  if(best>pos){
+    for(let k=Math.max(pos,0); k<=best; k++){ words[k].el.classList.add('said'); words[k].el.classList.remove('now'); }
+    pos=best;
+    words[pos].el.classList.add('now');
+    setTargetToWord(pos);
+  }
+}
+
+/* ---------- stage open/close ---------- */
+$('startBtn').onclick = async ()=>{
+  await saveState();
+  buildScript();
+  $('scriptText').style.fontSize=$('fontSize').value+'px';
+  $('shade').style.background=`rgba(8,6,3,${$('dim').value/100})`;
+  $('setup').style.display='none';
+  $('stage').style.display='block';
+  curY = targetY = -laserPx();
+  $('scriptText').style.transform=`translateY(${-curY}px)`;
+  if(rafId) cancelAnimationFrame(rafId);
+  autoLast=0; rafId=requestAnimationFrame(loop);
+  $('hint').textContent = mode==='voice'
+    ? 'Voice follow is on — just start talking. Jokes and coughs won\u2019t move it.'
+    : 'Tap anywhere on the text to pause / resume scrolling';
+
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'user', width:{ideal:1920}, height:{ideal:1080}}, audio:true });
+    $('cam').srcObject=stream;
+    $('stage').classList.remove('noCam');
+  }catch(err){
+    $('stage').classList.add('noCam');
+    toast('Camera blocked here — prompter still works. Screen-record with Control Center, or tell Claude for plan B.', 6000);
+  }
+  if(mode==='voice') startVoice();
+};
+$('backBtn').onclick=()=>{
+  stopVoice(); autoOn=false;
+  if(recorder && recorder.state==='recording') stopRecording();
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  if(rafId) cancelAnimationFrame(rafId);
+  $('stage').style.display='none';
+  $('setup').style.display='flex';
+};
+$('restartBtn').onclick=()=>{
+  pos=-1; autoOn=false; autoLast=0;
+  words.forEach(w=>{w.el.classList.remove('said','now');});
+  curY = targetY = -laserPx();
+};
+$('scrollZone').onclick=()=>{
+  if(mode==='auto'){ autoOn=!autoOn; autoLast=0;
+    $('hint').textContent = autoOn?'':'Paused — tap to resume'; }
+};
+$('slower').onclick=e=>{e.stopPropagation();
+  if(mode==='auto'){ speed=Math.max(6,speed-6); toast('Speed: '+speed,900); }
+  else { targetY-=60; } };
+$('faster').onclick=e=>{e.stopPropagation();
+  if(mode==='auto'){ speed=Math.min(140,speed+6); toast('Speed: '+speed,900); }
+  else { targetY+=60; } };
+window.addEventListener('orientationchange', ()=>{ setTimeout(()=>{ if(pos>=0) setTargetToWord(pos); else {curY=targetY=-laserPx();} }, 350); });
+
+/* ---------- recording ---------- */
+function fmt(s){const m=Math.floor(s/60),ss=Math.floor(s%60);return String(m).padStart(2,'0')+':'+String(ss).padStart(2,'0');}
+$('recBtn').onclick=async()=>{
+  if(recorder && recorder.state==='recording'){ stopRecording(); return; }
+  const c=$('count'); c.style.display='flex';
+  for(const n of ['3','2','1']){ c.textContent=n; await new Promise(r=>setTimeout(r,800)); }
+  c.style.display='none';
+
+  if(stream){
+    chunks=[]; let mime='';
+    for(const m of ['video/mp4','video/webm;codecs=h264','video/webm'])
+      if(window.MediaRecorder && MediaRecorder.isTypeSupported(m)){ mime=m; break; }
+    try{
+      recorder=new MediaRecorder(stream, mime?{mimeType:mime, videoBitsPerSecond:8_000_000}:undefined);
+      recorder.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+      recorder.onstop=()=>{
+        const type=recorder.mimeType||'video/webm';
+        const blob=new Blob(chunks,{type});
+        const ext=type.includes('mp4')?'mp4':'webm';
+        const a=document.createElement('a');
+        a.href=URL.createObjectURL(blob);
+        a.download='HardHatNation-take-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.'+ext;
+        a.click();
+        toast('Take saved ✔ Check Files / Downloads.');
+      };
+      recorder.start(1000);
+      $('recBtn').classList.add('recording');
+      recStart=Date.now(); $('timer').classList.add('rec');
+      timerInt=setInterval(()=>$('timer').textContent=fmt((Date.now()-recStart)/1000),500);
+    }catch(err){
+      toast('This browser can\u2019t record — prompter still runs. Use Control Center → Screen Recording.',6000);
+    }
+  } else {
+    toast('No camera — prompter running. Screen-record instead.',4000);
+  }
+  if(mode==='auto'){ autoOn=true; autoLast=0; }
+  $('hint').textContent='';
+};
+function stopRecording(){
+  if(recorder && recorder.state==='recording') recorder.stop();
+  $('recBtn').classList.remove('recording');
+  $('timer').classList.remove('rec');
+  clearInterval(timerInt);
+  if(mode==='auto') autoOn=false;
+}
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
