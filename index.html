@@ -281,6 +281,29 @@ function buildScript(){
 
 /* ---------- scrolling engine ---------- */
 function laserPx(){ return $('scrollZone').clientHeight * 0.32; }
+let wordTops=[];
+function cacheOffsets(){
+  wordTops = words.map(w => w.el.offsetTop + w.el.offsetHeight*0.6);
+}
+let hiIdx=0, hiTick=0;
+function updateHighlight(){
+  if(!words.length || !wordTops.length) return;
+  const lineY = curY + laserPx();
+  // advance
+  while(hiIdx < words.length && wordTops[hiIdx] < lineY){
+    words[hiIdx].el.classList.add('said'); words[hiIdx].el.classList.remove('now');
+    hiIdx++;
+  }
+  // retreat (after Top / nudges)
+  while(hiIdx > 0 && wordTops[hiIdx-1] >= lineY){
+    hiIdx--;
+    words[hiIdx].el.classList.remove('said','now');
+  }
+  if(hiIdx < words.length){
+    words.forEach((w,i)=>{ if(i!==hiIdx) w.el.classList.remove('now'); });
+    words[hiIdx].el.classList.add('now');
+  }
+}
 function setTargetToWord(i){
   if(i<0){ targetY = -laserPx(); return; }
   const el=words[i].el;
@@ -308,6 +331,7 @@ function loop(t){
   if(targetY>maxY) targetY=maxY;
   curY += (targetY-curY)*0.16;
   $('scriptText').style.transform = `translateY(${-curY}px)`;
+  if(++hiTick % 6 === 0) updateHighlight();
   rafId=requestAnimationFrame(loop);
 }
 
@@ -363,6 +387,7 @@ $('startBtn').onclick = async ()=>{
   $('stage').style.display='block';
   curY = targetY = -laserPx();
   $('scriptText').style.transform=`translateY(${-curY}px)`;
+  hiIdx=0; setTimeout(cacheOffsets, 120);
   if(rafId) cancelAnimationFrame(rafId);
   autoLast=0; rafId=requestAnimationFrame(loop);
   frozen=false;
@@ -391,7 +416,7 @@ $('backBtn').onclick=()=>{
   $('setup').style.display='flex';
 };
 $('restartBtn').onclick=()=>{
-  pos=-1; autoOn=false; autoLast=0;
+  pos=-1; autoOn=false; autoLast=0; hiIdx=0;
   words.forEach(w=>{w.el.classList.remove('said','now');});
   curY = targetY = -laserPx();
 };
@@ -403,7 +428,7 @@ $('scrollZone').onclick=()=>{
 };
 $('slower').onclick=e=>{e.stopPropagation(); speed=Math.max(6,speed-6); toast('Speed: '+speed,900); };
 $('faster').onclick=e=>{e.stopPropagation(); speed=Math.min(140,speed+6); toast('Speed: '+speed,900); };
-window.addEventListener('orientationchange', ()=>{ setTimeout(()=>{ if(pos>=0) setTargetToWord(pos); else {curY=targetY=-laserPx();} }, 350); });
+window.addEventListener('orientationchange', ()=>{ setTimeout(()=>{ cacheOffsets(); }, 400); });
 
 /* ---------- recording ---------- */
 function fmt(s){const m=Math.floor(s/60),ss=Math.floor(s%60);return String(m).padStart(2,'0')+':'+String(ss).padStart(2,'0');}
