@@ -116,8 +116,8 @@
 <body>
 
 <div id="setup">
-  <div class="brand"><div class="hat"></div><h1>Hard Hat Prompter&nbsp;Pro</h1><span style="margin-left:auto;font-size:11px;font-weight:800;color:#8E8571;border:1px solid #2A241C;padding:4px 8px;border-radius:999px;">v5</span></div>
-  <div class="sub">Talk — it scrolls. Go quiet — it stops. Telling a joke? One tap freezes it until you tap again. Works upright or sideways, records while it listens.</div>
+  <div class="brand"><div class="hat"></div><h1>Hard Hat Prompter&nbsp;Pro</h1><span style="margin-left:auto;font-size:11px;font-weight:800;color:#8E8571;border:1px solid #2A241C;padding:4px 8px;border-radius:999px;">v6</span></div>
+  <div class="sub">Talk — it scrolls. Go quiet — it stops. Telling a joke? Double-tap freezes it for a joke, double-tap releases. Works upright or sideways, records while it listens.</div>
 
   <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
     <label for="scriptInput">Your script — put stage directions in (parentheses), they show blue and the voice tracker skips them</label>
@@ -319,15 +319,18 @@ function loop(t){
       targetY += speed*dt;
     }
     if(mode==='voice' && analyser && srcNode){
-      const lvl=vadLevel();
-      const TH = Math.max(0.015, ambient*3.2);
-      // adapt to background noise ONLY while quiet, so speech never inflates the threshold
-      if(lvl < TH) ambient = ambient*0.98 + lvl*0.02;
-      const now=performance.now();
-      if(lvl>TH) lastVoiceT=now;
-      const speaking = (now-lastVoiceT) < HANG_MS;
-      if(speaking!==talking){ talking=speaking; setChip(); }
-      if(talking && !frozen) targetY += speed*dt;
+      if(audioCtx.state!=='running'){ if(hiTick%30===0){ wakeCtx(); setChip(); } }
+      else{
+        const lvl=vadLevel(); lastLvl=lvl;
+        const TH = Math.max(0.015, ambient*3.2);
+        if(lvl < TH) ambient = ambient*0.98 + lvl*0.02;
+        const now=performance.now();
+        if(lvl>TH) lastVoiceT=now;
+        const speaking = (now-lastVoiceT) < HANG_MS;
+        if(speaking!==talking) talking=speaking;
+        if(hiTick%12===0) setChip();
+        if(talking && !frozen) targetY += speed*dt;
+      }
     }
     const maxY = $('scriptText').scrollHeight - laserPx();
     if(targetY>maxY) targetY=maxY;
@@ -343,27 +346,24 @@ let audioCtx=null, analyser=null, vadData=null, srcNode=null;
 let talking=false, lastVoiceT=0, frozen=false, ambient=0.008;
 const HANG_MS=380;
 
-function ensureCtx(){
-  if(!audioCtx){
-    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-  }
-  if(audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+function freshCtx(){
+  // iOS: rebuild the whole engine inside a user tap — cures the 'interrupted'/silent-mic state
+  if(audioCtx){ try{audioCtx.close();}catch(e){} }
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024;
+  vadData = new Uint8Array(analyser.fftSize);
+  srcNode = null;
+  audioCtx.resume().catch(()=>{});
   return audioCtx;
 }
-// Keep the mic engine alive: any tap anywhere re-unlocks it (Apple requires a gesture)
-['touchend','click'].forEach(ev =>
-  document.addEventListener(ev, ()=>{ if(audioCtx && audioCtx.state==='suspended') audioCtx.resume().catch(()=>{}); }, {passive:true}));
-document.addEventListener('visibilitychange', ()=>{
-  if(!document.hidden && audioCtx && audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
-});
+function wakeCtx(){ if(audioCtx && audioCtx.state!=='running') audioCtx.resume().catch(()=>{}); }
+['touchend','click'].forEach(ev => document.addEventListener(ev, wakeCtx, {passive:true}));
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) wakeCtx(); });
 
 function startVAD(){
   if(!stream) { setMode('auto'); toast('No mic — switched to auto scroll.'); return; }
   try{
-    const ctx = ensureCtx();
-    if(srcNode){ try{srcNode.disconnect();}catch(e){} srcNode=null; }
-    srcNode = ctx.createMediaStreamSource(stream);
-    if(!analyser){ analyser = ctx.createAnalyser(); analyser.fftSize = 1024; vadData = new Uint8Array(analyser.fftSize); }
+    srcNode = audioCtx.createMediaStreamSource(stream);
     srcNode.connect(analyser);
     ambient = 0.008;
   }catch(e){
@@ -382,19 +382,23 @@ function vadLevel(){
   for(let i=0;i<vadData.length;i+=4){ const v=(vadData[i]-128)/128; sum+=v*v; }
   return Math.sqrt(sum/(vadData.length/4));
 }
+let lastLvl=0;
 function setChip(){
   const ch=$('voiceChip');
   ch.classList.remove('talking','quiet','frozen');
   if(mode!=='voice'){ ch.textContent='TALK'; return; }
+  if(audioCtx && audioCtx.state!=='running'){ ch.textContent='🎤 TAP SCREEN'; return; }
+  const bars = lastLvl>0.06?'▂▄▆':lastLvl>0.03?'▂▄':lastLvl>0.012?'▂':'·';
   if(frozen){ ch.classList.add('frozen'); ch.textContent='FROZEN'; }
-  else if(talking){ ch.classList.add('talking'); ch.textContent='TALKING'; }
-  else { ch.classList.add('quiet'); ch.textContent='QUIET'; }
+  else if(talking){ ch.classList.add('talking'); ch.textContent='TALKING '+bars; }
+  else { ch.classList.add('quiet'); ch.textContent='QUIET '+bars; }
 }
 $('voiceChip').onclick=()=>{ if(mode==='voice'){ frozen=!frozen; setChip(); } };
 
 /* ---------- stage open/close ---------- */
 $('startBtn').onclick = async ()=>{
-  await saveState();
+  if(mode==='voice') freshCtx();   // must happen inside the tap, before anything async
+  saveState();
   buildScript();
   $('scriptText').style.fontSize=$('fontSize').value+'px';
   $('shade').style.background=`rgba(8,6,3,${$('dim').value/100})`;
@@ -407,7 +411,7 @@ $('startBtn').onclick = async ()=>{
   autoLast=0; rafId=requestAnimationFrame(loop);
   frozen=false;
   $('hint').textContent = mode==='voice'
-    ? 'Talk = scrolls. Quiet = stops. Tap the text to FREEZE for a joke, tap again to release.'
+    ? 'Talk = scrolls. Quiet = stops. DOUBLE-TAP the text to FREEZE for a joke, double-tap to release.'
     : 'Tap anywhere on the text to pause / resume scrolling';
 
   try{
@@ -435,11 +439,14 @@ $('restartBtn').onclick=()=>{
   words.forEach(w=>{w.el.classList.remove('said','now');});
   curY = targetY = -laserPx();
 };
+let lastTap=0;
 $('scrollZone').onclick=()=>{
   if(mode==='auto'){ autoOn=!autoOn; autoLast=0;
-    $('hint').textContent = autoOn?'':'Paused — tap to resume'; }
-  else { frozen=!frozen; setChip();
-    $('hint').textContent = frozen?'FROZEN — tap the text when the joke\u2019s over':''; }
+    $('hint').textContent = autoOn?'':'Paused — tap to resume'; return; }
+  const now=Date.now();
+  if(now-lastTap<450){ frozen=!frozen; setChip();
+    $('hint').textContent = frozen?'FROZEN — double-tap again to release':''; }
+  lastTap=now;
 };
 $('slower').onclick=e=>{e.stopPropagation(); speed=Math.max(6,speed-6); toast('Speed: '+speed,900); };
 $('faster').onclick=e=>{e.stopPropagation(); speed=Math.min(140,speed+6); toast('Speed: '+speed,900); };
