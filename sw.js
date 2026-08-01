@@ -1,4 +1,4 @@
-const CACHE = 'hhn-prompter-v1';
+const CACHE = 'hhn-prompter-v2';
 const FILES = [
   './', './index.html',
   './manifest.json',

@@ -73,8 +73,12 @@
     padding:calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left)); z-index:4;}
   .chip{background:rgba(13,11,8,.78); border:1px solid rgba(240,178,42,.5); color:var(--gold);
     font-size:12.5px; font-weight:800; letter-spacing:.06em; padding:9px 13px; border-radius:999px; cursor:pointer; white-space:nowrap;}
-  #voiceChip.listening{border-color:#4CAF6D; color:#7CE29B;}
-  #voiceChip.listening::before{content:"● "; animation:pulse 1.2s infinite;}
+  #voiceChip.talking{border-color:#4CAF6D; color:#7CE29B;}
+  #voiceChip.talking::before{content:"▶ ";}
+  #voiceChip.quiet{border-color:#B7AD97; color:#B7AD97;}
+  #voiceChip.quiet::before{content:"⏸ ";}
+  #voiceChip.frozen{border-color:#5FA8FF; color:#8FC3FF;}
+  #voiceChip.frozen::before{content:"✋ ";}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
   #timer{color:#fff; font-variant-numeric:tabular-nums; border-color:rgba(255,255,255,.35);}
   #timer.rec{border-color:var(--hazard); background:rgba(226,59,46,.28);}
@@ -93,13 +97,13 @@
 
   /* ---------- LANDSCAPE ---------- */
   @media (orientation: landscape){
-    #scriptText{left:4%; right:120px;}
+    #scriptText{left:172px; right:140px;}
     #topbar{right:auto; left:0; flex-direction:column; align-items:flex-start; width:auto;
       padding-left:calc(10px + env(safe-area-inset-left));}
-    #controls{left:auto; right:0; top:0; bottom:0; flex-direction:column; width:112px; gap:18px;
+    #controls{left:auto; right:0; top:0; bottom:0; flex-direction:column; width:118px; gap:18px;
       padding:0 calc(12px + env(safe-area-inset-right)) 0 0;}
-    .hint{bottom:12px; right:130px; left:4%; text-align:left;}
-    #laser{right:118px;}
+    .hint{bottom:10px; right:140px; left:172px; text-align:left;}
+    #laser{left:150px; right:132px;}
   }
 
   #count{position:absolute; inset:0; display:none; align-items:center; justify-content:center;
@@ -113,7 +117,7 @@
 
 <div id="setup">
   <div class="brand"><div class="hat"></div><h1>Hard Hat Prompter&nbsp;Pro</h1></div>
-  <div class="sub">Voice-following teleprompter. Crack a joke, cough, go off-script — it holds your spot and catches you when you come back. Works upright or sideways.</div>
+  <div class="sub">Talk — it scrolls. Go quiet — it stops. Telling a joke? One tap freezes it until you tap again. Works upright or sideways, records while it listens.</div>
 
   <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
     <label for="scriptInput">Your script — put stage directions in (parentheses), they show blue and the voice tracker skips them</label>
@@ -121,7 +125,7 @@
   </div>
 
   <div class="modeRow">
-    <button class="modeBtn on" id="modeVoice">🎙 VOICE FOLLOW<small>scrolls when you talk, waits when you don't</small></button>
+    <button class="modeBtn on" id="modeVoice">🎙 TALK TO SCROLL<small>moves while you speak, stops when you stop</small></button>
     <button class="modeBtn" id="modeAuto">⏱ AUTO SCROLL<small>steady speed, tap to pause</small></button>
   </div>
 
@@ -130,8 +134,8 @@
     <input type="range" id="fontSize" min="24" max="64" value="38">
     <div class="val" id="fontVal">38</div>
   </div>
-  <div class="row" id="speedRow" style="opacity:.45">
-    <label>Auto speed</label>
+  <div class="row" id="speedRow">
+    <label>Reading speed</label>
     <input type="range" id="speed" min="10" max="90" value="34">
     <div class="val" id="speedVal">34</div>
   </div>
@@ -142,7 +146,7 @@
   </div>
 
   <button id="startBtn">Open camera &amp; prompter</button>
-  <div class="note">Allow camera + microphone when asked. Rotate your phone any time — the layout follows. Recording saves a video file to your phone when you stop. Voice follow needs a working mic; if it can't start, the app drops to auto scroll on its own.</div>
+  <div class="note">Allow camera + microphone when asked. Rotate any time — the layout follows. Recording saves a video file to your phone when you stop. Reading speed applies to both modes — in Talk mode it's how fast the text moves while your voice is going.</div>
 </div>
 
 <div id="stage">
@@ -283,70 +287,71 @@ function setTargetToWord(i){
   targetY = el.offsetTop + el.offsetHeight/2 - laserPx();
 }
 function loop(t){
-  // auto mode advance
+  if(!autoLast) autoLast=t;
+  const dt=(t-autoLast)/1000; autoLast=t;
+
   if(mode==='auto' && autoOn){
-    if(!autoLast) autoLast=t;
-    targetY += speed*(t-autoLast)/1000;
+    targetY += speed*dt;
   }
-  autoLast=t;
-  // smooth follow
-  curY += (targetY-curY)*0.14;
+  if(mode==='voice' && analyser){
+    const lvl=vadLevel();
+    // slow ambient calibration for the first ~2s and when clearly quiet
+    if(calibN<120){ ambient = ambient*0.95 + lvl*0.05; calibN++; }
+    const TH = Math.max(0.015, ambient*3.2);
+    const now=performance.now();
+    if(lvl>TH) lastVoiceT=now;
+    const speaking = (now-lastVoiceT) < HANG_MS;
+    if(speaking!==talking){ talking=speaking; setChip(); }
+    if(talking && !frozen) targetY += speed*dt;
+  }
+  const maxY = $('scriptText').scrollHeight - laserPx();
+  if(targetY>maxY) targetY=maxY;
+  curY += (targetY-curY)*0.16;
   $('scriptText').style.transform = `translateY(${-curY}px)`;
   rafId=requestAnimationFrame(loop);
 }
 
-/* ---------- voice follow ---------- */
-function startVoice(){
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){ toast('Voice follow not supported in this browser — switched to auto scroll.'); setMode('auto'); autoOn=false; return; }
-  rec = new SR();
-  rec.continuous=true; rec.interimResults=true; rec.lang='en-US';
-  rec.onresult = e=>{
-    let recent=[];
-    for(let i=Math.max(0,e.results.length-3); i<e.results.length; i++){
-      recent = recent.concat(e.results[i][0].transcript.trim().split(/\s+/));
-    }
-    matchWords(recent.slice(-8).map(norm).filter(Boolean));
-  };
-  rec.onstart = ()=>{ recActive=true; $('voiceChip').classList.add('listening'); $('voiceChip').textContent='LISTENING'; };
-  rec.onend = ()=>{ recActive=false;
-    if(mode==='voice' && $('stage').style.display==='block'){ try{ rec.start(); }catch(e){} } // keep alive
-    else { $('voiceChip').classList.remove('listening'); $('voiceChip').textContent='VOICE'; }
-  };
-  rec.onerror = ev=>{
-    if(ev.error==='not-allowed' || ev.error==='service-not-allowed'){
-      toast('Mic blocked for voice follow — switched to auto scroll. Tap text to pause/resume.', 5000);
-      setMode('auto'); autoOn=true;
-    }
-  };
-  try{ rec.start(); }catch(e){}
-}
-function stopVoice(){ if(rec){ try{ rec.onend=null; rec.stop(); }catch(e){} rec=null; }
-  recActive=false; $('voiceChip').classList.remove('listening'); $('voiceChip').textContent='VOICE'; }
+/* ---------- talk-to-scroll (voice energy) ---------- */
+let audioCtx=null, analyser=null, vadData=null;
+let talking=false, lastVoiceT=0, frozen=false, ambient=0.008, calibN=0;
+const HANG_MS=380;          // keep scrolling this long after voice stops (word gaps)
 
-/* match recent spoken words against a window ahead of current position */
-function matchWords(spoken){
-  if(!spoken.length || !words.length) return;
-  const WINDOW=34;
-  const start=Math.max(0,pos-2), end=Math.min(words.length-1, Math.max(pos,0)+WINDOW);
-  let best=-1;
-  // walk spoken words in order; greedy align inside window
-  let cursor=start;
-  for(const sw of spoken){
-    for(let j=cursor; j<=end; j++){
-      const w=words[j].norm;
-      if(w===sw || (w.length>3 && sw.length>3 && (w.startsWith(sw)||sw.startsWith(w)))){
-        best=j; cursor=j+1; break;
-      }
-    }
-  }
-  if(best>pos){
-    for(let k=Math.max(pos,0); k<=best; k++){ words[k].el.classList.add('said'); words[k].el.classList.remove('now'); }
-    pos=best;
-    words[pos].el.classList.add('now');
-    setTargetToWord(pos);
+function startVAD(){
+  if(!stream) { setMode('auto'); toast('No mic — switched to auto scroll.'); return; }
+  try{
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const srcNode = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    srcNode.connect(analyser);
+    vadData = new Uint8Array(analyser.fftSize);
+    ambient = 0.008; calibN = 0;
+    if(audioCtx.state==='suspended') audioCtx.resume();
+  }catch(e){
+    setMode('auto');
+    toast('Voice detection unavailable — switched to auto scroll.');
   }
 }
+function stopVAD(){
+  if(audioCtx){ try{audioCtx.close();}catch(e){} audioCtx=null; analyser=null; }
+  talking=false; setChip();
+}
+function vadLevel(){
+  if(!analyser) return 0;
+  analyser.getByteTimeDomainData(vadData);
+  let sum=0;
+  for(let i=0;i<vadData.length;i+=4){ const v=(vadData[i]-128)/128; sum+=v*v; }
+  return Math.sqrt(sum/(vadData.length/4));
+}
+function setChip(){
+  const ch=$('voiceChip');
+  ch.classList.remove('talking','quiet','frozen');
+  if(mode!=='voice'){ ch.textContent='TALK'; return; }
+  if(frozen){ ch.classList.add('frozen'); ch.textContent='FROZEN'; }
+  else if(talking){ ch.classList.add('talking'); ch.textContent='TALKING'; }
+  else { ch.classList.add('quiet'); ch.textContent='QUIET'; }
+}
+$('voiceChip').onclick=()=>{ if(mode==='voice'){ frozen=!frozen; setChip(); } };
 
 /* ---------- stage open/close ---------- */
 $('startBtn').onclick = async ()=>{
@@ -360,8 +365,9 @@ $('startBtn').onclick = async ()=>{
   $('scriptText').style.transform=`translateY(${-curY}px)`;
   if(rafId) cancelAnimationFrame(rafId);
   autoLast=0; rafId=requestAnimationFrame(loop);
+  frozen=false;
   $('hint').textContent = mode==='voice'
-    ? 'Voice follow is on — just start talking. Jokes and coughs won\u2019t move it.'
+    ? 'Talk = scrolls. Quiet = stops. Tap the text to FREEZE for a joke, tap again to release.'
     : 'Tap anywhere on the text to pause / resume scrolling';
 
   try{
@@ -373,10 +379,11 @@ $('startBtn').onclick = async ()=>{
     $('stage').classList.add('noCam');
     toast('Camera blocked here — prompter still works. Screen-record with Control Center, or tell Claude for plan B.', 6000);
   }
-  if(mode==='voice') startVoice();
+  if(mode==='voice') startVAD();
+  setChip();
 };
 $('backBtn').onclick=()=>{
-  stopVoice(); autoOn=false;
+  stopVAD(); autoOn=false; frozen=false;
   if(recorder && recorder.state==='recording') stopRecording();
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
   if(rafId) cancelAnimationFrame(rafId);
@@ -391,13 +398,11 @@ $('restartBtn').onclick=()=>{
 $('scrollZone').onclick=()=>{
   if(mode==='auto'){ autoOn=!autoOn; autoLast=0;
     $('hint').textContent = autoOn?'':'Paused — tap to resume'; }
+  else { frozen=!frozen; setChip();
+    $('hint').textContent = frozen?'FROZEN — tap the text when the joke\u2019s over':''; }
 };
-$('slower').onclick=e=>{e.stopPropagation();
-  if(mode==='auto'){ speed=Math.max(6,speed-6); toast('Speed: '+speed,900); }
-  else { targetY-=60; } };
-$('faster').onclick=e=>{e.stopPropagation();
-  if(mode==='auto'){ speed=Math.min(140,speed+6); toast('Speed: '+speed,900); }
-  else { targetY+=60; } };
+$('slower').onclick=e=>{e.stopPropagation(); speed=Math.max(6,speed-6); toast('Speed: '+speed,900); };
+$('faster').onclick=e=>{e.stopPropagation(); speed=Math.min(140,speed+6); toast('Speed: '+speed,900); };
 window.addEventListener('orientationchange', ()=>{ setTimeout(()=>{ if(pos>=0) setTargetToWord(pos); else {curY=targetY=-laserPx();} }, 350); });
 
 /* ---------- recording ---------- */
@@ -436,6 +441,8 @@ $('recBtn').onclick=async()=>{
     toast('No camera — prompter running. Screen-record instead.',4000);
   }
   if(mode==='auto'){ autoOn=true; autoLast=0; }
+  if(audioCtx && audioCtx.state==='suspended') audioCtx.resume();
+  frozen=false; setChip();
   $('hint').textContent='';
 };
 function stopRecording(){
