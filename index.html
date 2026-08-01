@@ -116,7 +116,7 @@
 <body>
 
 <div id="setup">
-  <div class="brand"><div class="hat"></div><h1>Hard Hat Prompter&nbsp;Pro</h1><span style="margin-left:auto;font-size:11px;font-weight:800;color:#8E8571;border:1px solid #2A241C;padding:4px 8px;border-radius:999px;">v4</span></div>
+  <div class="brand"><div class="hat"></div><h1>Hard Hat Prompter&nbsp;Pro</h1><span style="margin-left:auto;font-size:11px;font-weight:800;color:#8E8571;border:1px solid #2A241C;padding:4px 8px;border-radius:999px;">v5</span></div>
   <div class="sub">Talk — it scrolls. Go quiet — it stops. Telling a joke? One tap freezes it until you tap again. Works upright or sideways, records while it listens.</div>
 
   <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
@@ -310,54 +310,69 @@ function setTargetToWord(i){
   targetY = el.offsetTop + el.offsetHeight/2 - laserPx();
 }
 function loop(t){
-  if(!autoLast) autoLast=t;
-  const dt=(t-autoLast)/1000; autoLast=t;
+  rafId=requestAnimationFrame(loop);   // schedule FIRST — nothing can stop the engine
+  try{
+    if(!autoLast) autoLast=t;
+    const dt=Math.min((t-autoLast)/1000, 0.1); autoLast=t;
 
-  if(mode==='auto' && autoOn){
-    targetY += speed*dt;
-  }
-  if(mode==='voice' && analyser){
-    const lvl=vadLevel();
-    // slow ambient calibration for the first ~2s and when clearly quiet
-    if(calibN<120){ ambient = ambient*0.95 + lvl*0.05; calibN++; }
-    const TH = Math.max(0.015, ambient*3.2);
-    const now=performance.now();
-    if(lvl>TH) lastVoiceT=now;
-    const speaking = (now-lastVoiceT) < HANG_MS;
-    if(speaking!==talking){ talking=speaking; setChip(); }
-    if(talking && !frozen) targetY += speed*dt;
-  }
-  const maxY = $('scriptText').scrollHeight - laserPx();
-  if(targetY>maxY) targetY=maxY;
-  curY += (targetY-curY)*0.16;
-  $('scriptText').style.transform = `translateY(${-curY}px)`;
-  if(++hiTick % 6 === 0) updateHighlight();
-  rafId=requestAnimationFrame(loop);
+    if(mode==='auto' && autoOn){
+      targetY += speed*dt;
+    }
+    if(mode==='voice' && analyser && srcNode){
+      const lvl=vadLevel();
+      const TH = Math.max(0.015, ambient*3.2);
+      // adapt to background noise ONLY while quiet, so speech never inflates the threshold
+      if(lvl < TH) ambient = ambient*0.98 + lvl*0.02;
+      const now=performance.now();
+      if(lvl>TH) lastVoiceT=now;
+      const speaking = (now-lastVoiceT) < HANG_MS;
+      if(speaking!==talking){ talking=speaking; setChip(); }
+      if(talking && !frozen) targetY += speed*dt;
+    }
+    const maxY = $('scriptText').scrollHeight - laserPx();
+    if(targetY>maxY) targetY=maxY;
+    if(targetY<-laserPx()) targetY=-laserPx();
+    curY += (targetY-curY)*0.16;
+    $('scriptText').style.transform = `translateY(${-curY}px)`;
+    if(++hiTick % 6 === 0) updateHighlight();
+  }catch(err){ /* one bad frame never kills the prompter */ }
 }
 
 /* ---------- talk-to-scroll (voice energy) ---------- */
-let audioCtx=null, analyser=null, vadData=null;
-let talking=false, lastVoiceT=0, frozen=false, ambient=0.008, calibN=0;
-const HANG_MS=380;          // keep scrolling this long after voice stops (word gaps)
+let audioCtx=null, analyser=null, vadData=null, srcNode=null;
+let talking=false, lastVoiceT=0, frozen=false, ambient=0.008;
+const HANG_MS=380;
+
+function ensureCtx(){
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  }
+  if(audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+  return audioCtx;
+}
+// Keep the mic engine alive: any tap anywhere re-unlocks it (Apple requires a gesture)
+['touchend','click'].forEach(ev =>
+  document.addEventListener(ev, ()=>{ if(audioCtx && audioCtx.state==='suspended') audioCtx.resume().catch(()=>{}); }, {passive:true}));
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden && audioCtx && audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+});
 
 function startVAD(){
   if(!stream) { setMode('auto'); toast('No mic — switched to auto scroll.'); return; }
   try{
-    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-    const srcNode = audioCtx.createMediaStreamSource(stream);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 1024;
+    const ctx = ensureCtx();
+    if(srcNode){ try{srcNode.disconnect();}catch(e){} srcNode=null; }
+    srcNode = ctx.createMediaStreamSource(stream);
+    if(!analyser){ analyser = ctx.createAnalyser(); analyser.fftSize = 1024; vadData = new Uint8Array(analyser.fftSize); }
     srcNode.connect(analyser);
-    vadData = new Uint8Array(analyser.fftSize);
-    ambient = 0.008; calibN = 0;
-    if(audioCtx.state==='suspended') audioCtx.resume();
+    ambient = 0.008;
   }catch(e){
     setMode('auto');
     toast('Voice detection unavailable — switched to auto scroll.');
   }
 }
 function stopVAD(){
-  if(audioCtx){ try{audioCtx.close();}catch(e){} audioCtx=null; analyser=null; }
+  if(srcNode){ try{srcNode.disconnect();}catch(e){} srcNode=null; }
   talking=false; setChip();
 }
 function vadLevel(){
@@ -388,7 +403,7 @@ $('startBtn').onclick = async ()=>{
   curY = targetY = -laserPx();
   $('scriptText').style.transform=`translateY(${-curY}px)`;
   hiIdx=0; setTimeout(cacheOffsets, 120);
-  if(rafId) cancelAnimationFrame(rafId);
+  if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
   autoLast=0; rafId=requestAnimationFrame(loop);
   frozen=false;
   $('hint').textContent = mode==='voice'
@@ -409,9 +424,9 @@ $('startBtn').onclick = async ()=>{
 };
 $('backBtn').onclick=()=>{
   stopVAD(); autoOn=false; frozen=false;
+  if(rafId){ cancelAnimationFrame(rafId); rafId=null; }
   if(recorder && recorder.state==='recording') stopRecording();
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
-  if(rafId) cancelAnimationFrame(rafId);
   $('stage').style.display='none';
   $('setup').style.display='flex';
 };
